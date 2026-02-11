@@ -11,6 +11,7 @@ from .serializers import (
 )
 from decimal import Decimal, InvalidOperation
 import datetime
+import os
 from tools.pdf_parser import PDFInvoiceParser
 from tools.ocr_parser import OCRInvoiceParser
 
@@ -48,7 +49,17 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Invoice.objects.filter(user=self.request.user)
+        queryset = Invoice.objects.filter(user=self.request.user)
+        
+        # 支持过滤出可提报的发票（排除已在待审核或已批准的报销单中的发票）
+        available_only = self.request.query_params.get('available_only')
+        if available_only and available_only.lower() in ('true', '1', 'yes'):
+            # 排除在 PENDING 或 APPROVED 状态报销单中的发票
+            queryset = queryset.exclude(
+                reimbursements__status__in=['PENDING', 'APPROVED']
+            )
+        
+        return queryset
 
     def perform_create(self, serializer):
         invoice = serializer.save(user=self.request.user)
@@ -57,7 +68,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     def _try_parse_invoice(self, invoice: Invoice) -> None:
         file_path = invoice.file.path
         parsed = None
-        if file_path.lower().endswith('.pdf'):
+        ext = os.path.splitext(file_path)[1].lower()
+        image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+
+        if ext == '.pdf':
             try:
                 parser = PDFInvoiceParser(file_path)
                 parsed = parser.parse()
@@ -68,16 +82,17 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 self._apply_parsed_fields(invoice, parsed)
                 return
 
-        ocr_parsed = self._try_ocr_parse(file_path)
-        if ocr_parsed:
-            self._apply_parsed_fields(invoice, ocr_parsed)
+        if ext in image_exts or ext == '.pdf':
+            ocr_parsed = self._try_ocr_parse(file_path)
+            if ocr_parsed:
+                self._apply_parsed_fields(invoice, ocr_parsed)
 
     def _needs_ocr(self, parsed: dict) -> bool:
         return not parsed.get('amount_in_figures') or not parsed.get('invoice_date')
 
     def _try_ocr_parse(self, file_path: str) -> dict | None:
         try:
-            parser = OCRInvoiceParser(file_path, lang='ch', use_gpu=False)
+            parser = OCRInvoiceParser(file_path, lang='ch')
             return parser.parse()
         except Exception:
             return None

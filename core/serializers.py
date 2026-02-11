@@ -1,4 +1,5 @@
 from rest_framework import serializers
+import os
 from .models import User, Invoice, Reimbursement
 
 class UserSerializer(serializers.ModelSerializer):
@@ -73,7 +74,18 @@ class InvoiceSerializer(serializers.ModelSerializer):
         )
 
     def get_is_submitted(self, obj):
-        return obj.reimbursements.exists()
+        # 只有当发票在待审核或已批准的报销单中时，才认为已提报
+        # 被驳回的报销单对应的发票可以再次提报
+        return obj.reimbursements.filter(status__in=['PENDING', 'APPROVED']).exists()
+
+    def validate_file(self, value):
+        allowed_exts = {'.pdf', '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        ext = os.path.splitext(value.name)[1].lower()
+        if ext not in allowed_exts:
+            raise serializers.ValidationError(
+                'Unsupported file type. Please upload a PDF or image file.'
+            )
+        return value
 
 class ReimbursementSerializer(serializers.ModelSerializer):
     applicant = UserSerializer(read_only=True)
