@@ -13,6 +13,16 @@ class Invoice(models.Model):
     file = models.FileField(upload_to='invoices/')
     amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     invoice_date = models.DateField(null=True, blank=True)
+    product_name = models.CharField(max_length=255, null=True, blank=True)
+    specification_model = models.CharField(max_length=255, null=True, blank=True)
+    unit = models.CharField(max_length=50, null=True, blank=True)
+    quantity = models.CharField(max_length=50, null=True, blank=True)
+    unit_price = models.CharField(max_length=50, null=True, blank=True)
+    money_without_tax = models.CharField(max_length=50, null=True, blank=True)
+    tax_rate = models.CharField(max_length=50, null=True, blank=True)
+    tax_amount = models.CharField(max_length=50, null=True, blank=True)
+    amount_in_words = models.CharField(max_length=255, null=True, blank=True)
+    amount_in_figures = models.CharField(max_length=50, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

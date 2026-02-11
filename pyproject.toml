@@ -10,6 +10,12 @@ dependencies = [
     "djangorestframework>=3.16.1",
     "djangorestframework-simplejwt>=5.5.1",
     "mysqlclient>=2.2.7",
+    "pdfplumber>=0.11.9",
+    "paddleocr>=2.8.1",
+    "paddlepaddle>=2.6.2",
+    "pdf2image>=1.17.0",
+    "Pillow>=10.4.0",
+    "opencv-python-headless>=4.10.0.84",
 ]
 
 [[tool.uv.index]]
