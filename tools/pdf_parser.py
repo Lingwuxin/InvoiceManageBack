@@ -1,5 +1,5 @@
 """
-PDF发票解析工具 (Updated for PaddleOCR 3.x)
+PDF发票解析工具
 用于提取和解析PDF格式发票中的信息
 支持多种发票类型
 """
@@ -27,14 +27,14 @@ class PDFInvoiceParser:
     - 增值税普通发票
     """
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path_or_obj):
         """
         初始化解析器
 
         Args:
-            file_path: PDF文件路径
+            file_path_or_obj: PDF文件路径 或 文件对象
         """
-        self.file_path = file_path
+        self.file_path = file_path_or_obj if isinstance(file_path_or_obj, str) else None
         self.value_dict = {
             "invoice_number": "",      # 发票编号
             "invoice_date": "",        # 发票日期
@@ -50,8 +50,9 @@ class PDFInvoiceParser:
             "tax_amount": "",  # 税额
             "amount_in_words": "",    # 金额（大写）
             "amount_in_figures": "",  # 金额（小写）
+            "invoice_type": "OTHER",  # 发票类型: TRANSPORT, ACCOMMODATION, OTHER
         }
-        self.pdf = pdfplumber.open(self.file_path)
+        self.pdf = pdfplumber.open(file_path_or_obj)
         self.pdf_str = self.pdf.pages[0].extract_text_lines()
         self.pdf_table = self.pdf.pages[0].extract_table()
         self.full_text = "\n".join(
@@ -64,11 +65,46 @@ class PDFInvoiceParser:
             "电子发票（普通发票）": self.VAT_normal_parser,
             "增值税普通发票": self.VAT_normal_parser,
             "增值税专用发票": self.VAT_special_parser,
+            "中国铁路电子客票": self.railway_ticket_parser,
+            "铁路电子客票": self.railway_ticket_parser,
         }
 
     def parse(self) -> dict:
-        handled_data = self.handle_by_title_type()
-        return handled_data
+        self.handle_by_title_type()
+        self._classify_invoice_type()
+
+        if not self.value_dict.get("invoice_number"):
+            self.value_dict["invoice_number"] = self._extract_invoice_number()
+
+        if not self.value_dict.get("invoice_number"):
+            raise ValueError("无法识别发票号码，请检查是否为有效的发票文件")
+            
+        return self.value_dict
+
+    def _classify_invoice_type(self):
+        """根据发票内容自动归类"""
+        # 1. 优先判定铁路和航空客票 (TRANSPORT)
+        if "中国铁路" in self.full_text or "电子客票" in self.full_text or "航空运输电子客票行程单" in self.full_text:
+            self.value_dict["invoice_type"] = "TRANSPORT"
+            return
+            
+        product_name = self.value_dict.get("product_name", "") or ""
+        vendor_name = self.value_dict.get("vendor_name", "") or ""
+        
+        # 2. 判定住宿 (ACCOMMODATION)
+        # 关键词: 住宿费, 客房, 酒店
+        if "住宿" in product_name or "客房" in product_name or "酒店" in vendor_name or "住宿" in vendor_name:
+            self.value_dict["invoice_type"] = "ACCOMMODATION"
+            return
+            
+        # 3. 判定其他交通 (TRANSPORT) - 如出租车, 网约车, 客运
+        # 关键词: 客运, 运输, 交通, 约车
+        if "客运" in product_name or "运输" in product_name or "交通" in product_name or "约车" in product_name or "通行费" in product_name:
+            self.value_dict["invoice_type"] = "TRANSPORT"
+            return
+
+        # 4. 默认为 OTHER
+        self.value_dict["invoice_type"] = "OTHER"
 
     def handle_by_title_type(self):
         """根据发票类型选择对应的解析器"""
@@ -80,6 +116,11 @@ class PDFInvoiceParser:
             for invoice_type, parser in self.title_type_dict.items():
                 if invoice_type in self.invoice_title:
                     return parser()
+            
+            # 尝试根据内容特征判断
+            if "中国铁路" in self.full_text and "电子客票" in self.full_text:
+                return self.railway_ticket_parser()
+                
             raise ValueError(f"不支持的发票类型: {self.invoice_title}")
     
     # 增值税专票处理器
@@ -119,25 +160,57 @@ class PDFInvoiceParser:
             return self._extract_from_text()
         
         try:
-            # 尝试从表格提取信息（格式可能与专票不同）
-            product_info = self.pdf_table[1] if len(self.pdf_table) > 1 else None
-            price_info = self.pdf_table[2][2] if len(self.pdf_table) > 2 and len(self.pdf_table[2]) > 2 else None
+            # 尝试从表格提取信息
+            # 1. 寻找金额信息（价税合计）
+            price_info = None
+            for row in self.pdf_table:
+                if not row: continue
+                # 检查第一列是否包含"价税合计"
+                first_col = str(row[0]) if row[0] else ""
+                if "价税合计" in first_col:
+                    # 通常金额在同一行的后续列中
+                    for cell in row:
+                        if cell and ("小写" in str(cell) or "¥" in str(cell) or "￥" in str(cell)):
+                             price_info = cell
+                             break
+                if price_info: break
+            
+            # 如果还没找到，尝试兼容旧逻辑（固定位置）
+            if not price_info:
+                 price_info = self.pdf_table[2][2] if len(self.pdf_table) > 2 and len(self.pdf_table[2]) > 2 else None
             
             if price_info:
-                self.value_dict["amount_in_words"] = price_info.split(" ")[0] if " " in price_info else ""
-                self.value_dict["amount_in_figures"] = extract_amount_from_text(price_info)
+                # 提取大写金额 (取空格前的内容，或者通过正则提取)
+                if " " in price_info:
+                     self.value_dict["amount_in_words"] = price_info.split(" ")[0]
+                else:
+                     amount_words_match = re.search(r"([^\x00-\xff]+)", price_info) # 简易匹配中文
+                     if amount_words_match:
+                         self.value_dict["amount_in_words"] = amount_words_match.group(1)
+
+                self.value_dict["amount_in_figures"] = str(extract_amount_from_text(price_info))
                 self.value_dict["amount"] = self.value_dict["amount_in_figures"]
             
+            # 2. 尝试解析商品信息
+            product_info = self.pdf_table[1] if len(self.pdf_table) > 1 else None
             if product_info and product_info[0]:
-                # 尝试解析商品信息
                 product_text = product_info[0]
-                if "\n" in product_text:
+                # 尝试通过正则提取 *AAA*BBB 格式的商品名称
+                match = re.search(r'(\*[^*]+\*[^\s]+)', product_text)
+                if match:
+                    self.value_dict["product_name"] = match.group(1)
+                elif "\n" in product_text:
+                    # 如果没有星号，尝试取第二行（通常第一行是表头）
                     product_lines = product_text.split("\n")
                     if len(product_lines) > 1:
-                        product_info_list = product_lines[1].split(" ")
-                        if len(product_info_list) > 0:
-                            self.value_dict["product_name"] = product_info_list[0]
-            
+                        # 过滤掉"合 计"行等
+                        candidate = product_lines[1]
+                        if "项目名称" not in candidate and "合 计" not in candidate:
+                             self.value_dict["product_name"] = candidate.split(" ")[0]
+                else:
+                     # 简单的回退
+                     self.value_dict["product_name"] = product_text.split(" ")[0]
+
             # 提取日期
             self.value_dict["invoice_date"] = extract_date_from_text(self.full_text)
             
@@ -175,7 +248,68 @@ class PDFInvoiceParser:
             self.value_dict["amount_in_words"] = amount_words_match.group(1)
         
         return self.value_dict
-    
+
+    def railway_ticket_parser(self):
+        """解析铁路电子客票"""
+        # 尝试从文本提取信息
+        
+        # 金额：通常格式为 "价格：553.0元" 或 "¥553.0"
+        self.value_dict["amount_in_figures"] = str(extract_amount_from_text(self.full_text))
+        # 如果提取出的金额为0，尝试备用正则
+        if float(self.value_dict["amount_in_figures"]) == 0:
+             match = re.search(r'(?:票价|价格|金额)[:：]?\s*([0-9.]+)\s*元?', self.full_text)
+             if match:
+                 self.value_dict["amount_in_figures"] = match.group(1)
+
+        self.value_dict["amount"] = self.value_dict["amount_in_figures"]
+        
+        # 日期：优先提取开车时间
+        # 格式1：2024年05月20日10:30开
+        # 格式2：开车时间：2024年05月20日10:30
+        date_match = re.search(r'(\d{4})[年.-](\d{1,2})[月.-](\d{1,2})日?\s*\d{1,2}:\d{1,2}\s*开', self.full_text)
+        if not date_match:
+             date_match = re.search(r'开车时间[:：]?\s*(\d{4})[年.-](\d{1,2})[月.-](\d{1,2})', self.full_text)
+             
+        if date_match:
+            self.value_dict["invoice_date"] = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
+        else:
+            # 尝试提取日期，但排除开票日期
+            # 正则：匹配日期格式，且前面不能是 "开票日期" 或 "打印日期"
+            # 这里简单起见，如果找不到开车时间，再使用通用提取，但为了避免提取到开票日期，我们可以先尝试把开票日期部分抹去再提取，或者更精细的正则
+            # 由于铁路客票上通常只有两个明显日期：开车时间 和 开票日期。如果上面没提取到开车时间，大概率是OCR没识别出"开"字。
+            # 策略：查找所有日期，如果某个日期前面有 "开票日期" 字样，就跳过它。
+            
+            all_dates = re.finditer(r'(?:(开票日期|打印日期)[:：]?\s*)?(\d{4})[年.-](\d{1,2})[月.-](\d{1,2})', self.full_text)
+            found_date = ""
+            for match in all_dates:
+                prefix = match.group(1)
+                if not prefix: # 前面没有"开票日期"前缀
+                     found_date = f"{match.group(2)}-{int(match.group(3)):02d}-{int(match.group(4)):02d}"
+                     # 铁路票上除了开票日期，另一个大概率就是乘车日期，取第一个非开票日期的日期
+                     break
+            
+            if found_date:
+                self.value_dict["invoice_date"] = found_date
+            else:
+                 self.value_dict["invoice_date"] = extract_date_from_text(self.full_text)
+        
+        # 发票号码
+        invoice_num = self._extract_invoice_number()
+        if invoice_num:
+            self.value_dict["invoice_number"] = invoice_num
+        
+        # 商品名称 -> "铁路客票"
+        self.value_dict["product_name"] = "铁路客票"
+
+        # 提取车站信息 (例如: 郑州东 G415 长沙南)
+        # 匹配模式: 中文站点 + 空格 + 车次(字母数字) + 空格 + 中文站点
+        station_match = re.search(r'([\u4e00-\u9fa5]+)\s+[A-Z]\d+\s+([\u4e00-\u9fa5]+)', self.full_text)
+        if station_match:
+            self.value_dict["departure_place"] = station_match.group(1)
+            self.value_dict["arrival_place"] = station_match.group(2)
+        
+        return self.value_dict
+
     def _extract_invoice_number(self) -> str:
         """提取发票号码"""
         # 常见的发票号码格式
@@ -222,7 +356,7 @@ def extract_amount_from_text(text: str) -> float:
     Returns:
         提取的金额值
     """
-    match = re.search(r'¥([\d.]+)', text)
+    match = re.search(r'[¥￥]([\d.]+)', text)
     if match:
         return float(match.group(1))
     return 0.0

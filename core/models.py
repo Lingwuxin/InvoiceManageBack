@@ -7,10 +7,20 @@ class User(AbstractUser):
         ('ACCOUNTANT', 'Accountant'),
     )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='EMPLOYEE')
+    real_name = models.CharField(max_length=50, blank=True, null=True, verbose_name="姓名")
+    department = models.CharField(max_length=100, blank=True, null=True, verbose_name="部门")
 
 class Invoice(models.Model):
+    INVOICE_TYPE_CHOICES = (
+        ('TRANSPORT', '交通费'),
+        ('ACCOMMODATION', '住宿费'),
+        ('OTHER', '其他费用'),
+    )
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='invoices')
     file = models.FileField(upload_to='invoices/')
+    invoice_number = models.CharField(max_length=50, unique=True, verbose_name="发票号码")
+    invoice_type = models.CharField(max_length=20, choices=INVOICE_TYPE_CHOICES, default='OTHER')
     amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     invoice_date = models.DateField(null=True, blank=True)
     product_name = models.CharField(max_length=255, null=True, blank=True)
@@ -23,6 +33,8 @@ class Invoice(models.Model):
     tax_amount = models.CharField(max_length=50, null=True, blank=True)
     amount_in_words = models.CharField(max_length=255, null=True, blank=True)
     amount_in_figures = models.CharField(max_length=50, null=True, blank=True)
+    departure_place = models.CharField(max_length=100, null=True, blank=True)
+    arrival_place = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -38,6 +50,7 @@ class Reimbursement(models.Model):
     invoices = models.ManyToManyField(Invoice, related_name='reimbursements')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
     reviewer = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_reimbursements')
+    details = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

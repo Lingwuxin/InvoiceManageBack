@@ -5,18 +5,13 @@ description = "Invoice Management System with PaddleOCR 3.x"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "docxtpl>=0.16.8",
     "django>=5.2.11",
     "django-cors-headers>=4.9.0",
     "djangorestframework>=3.16.1",
     "djangorestframework-simplejwt>=5.5.1",
     "mysqlclient>=2.2.7",
     "pdfplumber>=0.11.9",
-    "paddleocr==3.3.0",
-    "paddlepaddle==3.2.0",
-    "pdf2image>=1.17.0",
-    "Pillow>=10.4.0",
-    "opencv-python-headless>=4.10.0.84",
-    "shapely>=2.0.0",
 ]
 
 [[tool.uv.index]]

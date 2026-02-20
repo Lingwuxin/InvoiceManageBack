@@ -7,7 +7,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'role', 'password')
+        fields = ('id', 'username', 'email', 'role', 'real_name', 'department', 'password')
 
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
@@ -17,7 +17,7 @@ class UserSerializer(serializers.ModelSerializer):
 class CurrentUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'role', 'is_active', 'is_superuser')
+        fields = ('id', 'username', 'email', 'role', 'real_name', 'department', 'is_active', 'is_superuser')
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
@@ -25,7 +25,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'role', 'is_active', 'is_superuser', 'password')
+        fields = ('id', 'username', 'email', 'role', 'real_name', 'department', 'is_active', 'is_superuser', 'password')
         extra_kwargs = {
             'is_superuser': {'read_only': True},
         }
@@ -58,6 +58,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = (
             'user',
             'created_at',
+            'invoice_number',
             'amount',
             'invoice_date',
             'product_name',
@@ -71,6 +72,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'amount_in_words',
             'amount_in_figures',
             'is_submitted',
+            'invoice_type',
         )
 
     def get_is_submitted(self, obj):
@@ -91,11 +93,17 @@ class ReimbursementSerializer(serializers.ModelSerializer):
     applicant = UserSerializer(read_only=True)
     invoices_details = InvoiceSerializer(source='invoices', many=True, read_only=True)
     reviewer = UserSerializer(read_only=True)
+    details = serializers.JSONField(required=False)
     reviewer_id = serializers.PrimaryKeyRelatedField(
         source='reviewer',
         queryset=User.objects.filter(role='ACCOUNTANT'),
         write_only=True,
-        required=True,
+        required=False,
+    )
+    invoices = serializers.PrimaryKeyRelatedField(
+        queryset=Invoice.objects.all(),
+        many=True,
+        required=False,
     )
     
     class Meta:
@@ -105,6 +113,7 @@ class ReimbursementSerializer(serializers.ModelSerializer):
             'applicant',
             'invoices',
             'invoices_details',
+            'details',
             'status',
             'reviewer',
             'reviewer_id',

@@ -139,7 +139,8 @@ AUTH_USER_MODEL = 'core.User'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )
+    ),
+    'EXCEPTION_HANDLER': 'core.exceptions.custom_exception_handler',
 }
 
 from datetime import timedelta
